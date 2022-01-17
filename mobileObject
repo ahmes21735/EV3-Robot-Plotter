@@ -1,0 +1,61 @@
+const float WHEEL_RADIUS = 2.75;
+const float INTERVAL_DIST_CM = 12;
+const int NUM_INTERVAL = 4;
+const int ENC_LIMIT = INTERVAL_DIST_CM * 180 / (PI*WHEEL_RADIUS);
+
+
+void driveDistance(float dist_cm, int motPower)
+{
+    nMotorEncoder[motorA] = 0;
+    motor[motorA] = motor[motorD] = motPower;
+    while(nMotorEncoder[motorA] < ENC_LIMIT)
+    {}
+    motor[motorA] = motor[motorD] = 0;
+}
+
+float calcSpeed(float dist_cm, int motPower)
+{
+    time1[T1] = 0;
+    driveDistance(dist_cm, motPower);
+    return dist_cm / (time1[T1] / 1000.0);
+}
+
+float speedArray[NUM_INTERVAL];
+
+task main()
+{
+    while(!getButtonPress(buttonAny))
+    {}
+    while(getButtonPress(buttonAny))
+    {}
+
+    // This is the line where we set the motor speeds, just change the values in the array
+    int motPower[NUM_INTERVAL]={10, 20, 30, 20};
+
+    for(int index = 0; index < NUM_INTERVAL; index++)
+    {
+        float speed = calcSpeed(INTERVAL_DIST_CM, motPower[index]);
+        speedArray[index] = speed;
+
+        //Used for experimenting with why the last sensor reading is inaccurate.
+        if (index < NUM_INTERVAL - 1)
+        {
+            wait1Msec(1000);
+        }
+
+    }
+
+    /* We make the robot drive for one additional interval to ensure the ROBOT records the
+    fourth interval properly */
+    driveDistance(10, 10);
+
+    displayString(2, "Speed 1 = %0.2f cm/s", speedArray[0]);
+    displayString(3, "Speed 2 = %0.2f cm/s", speedArray[1]);
+    displayString(4, "Speed 3 = %0.2f cm/s", speedArray[2]);
+    displayString(5, "Speed 4 = %0.2f cm/s", speedArray[3]);
+
+    while(!getButtonPress(buttonAny))
+    {}
+    while(getButtonPress(buttonAny))
+    {}
+}
