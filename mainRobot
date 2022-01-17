@@ -1,0 +1,293 @@
+#define ULTRASONIC_SENSOR_PORT S1
+#define GYRO_SENSOR_PORT S2
+#define COLOR_SENSOR_PORT S3
+
+// Global Constants Used In Functions
+const float INTERVAL_DIST_CM = 12;
+const int NUM_INTERVAL = 4;
+const int DIST_ADJUST_FOR_PEN = 45; /*This is the additional distance robot drives forward once it detects paper so that the entire robot and pen is positioned on top of paper */
+const int DRIVE_SPEED = 5;
+const int PEN_SPEED = 5;
+const int PEN_MOTOR_ROTATION = 135;
+const float WHEEL_RADIUS = 2.75;
+const float CONV_FACTOR = 180/(PI*WHEEL_RADIUS);
+const int SCALE = 1; /* This can be adjusted to scale the size of the lines the robot draws */
+
+const int NON_VALID_INDEX = 10; /* This is used to exit the for loop in moveToCoordinate if the robot is no longer on the paper*/
+
+// Size for Global Array
+const int NUM_ROW = 4;
+const int NUM_COL = 2;
+float valuesArray[NUM_ROW][NUM_COL];
+
+void configure()
+{
+    SensorType[COLOR_SENSOR_PORT] = sensorEV3_Color;
+    wait1Msec(50);
+    SensorMode[COLOR_SENSOR_PORT] = modeEV3Color_Color;
+    wait1Msec(50);
+    SensorType[ULTRASONIC_SENSOR_PORT] = sensorEV3_Ultrasonic;
+    wait1Msec(50);
+    SensorType[GYRO_SENSOR_PORT] = sensorEV3_Gyro;
+    wait1Msec(50);
+    SensorMode[GYRO_SENSOR_PORT] = modeEV3Gyro_Angle;
+    wait1Msec(50);
+    resetGyro(GYRO_SENSOR_PORT);
+}
+
+void go(int motorPower)
+{
+    motor[motorA]=motor[motorD]=motorPower;
+}
+
+void rotateRobot(int angle,int motorPower)
+{
+    resetGyro(S2);
+    if(angle<0)
+    {
+        motor[motorA]=-motorPower;
+        motor[motorD]=motorPower;
+    }
+    else
+    {
+        motor[motorA]=motorPower;
+        motor[motorD]=-motorPower;
+    }
+    while(getGyroDegrees(S2)<abs(angle))
+    {}
+    go(0);
+}
+
+
+void driveToPaper()
+{
+    rotateRobot(90,25);
+    go(25);
+    while(SensorValue[COLOR_SENSOR_PORT]!=(int)colorWhite)
+    {}
+    go(0);
+    nMotorEncoder[motorA]=0;
+    go(25);
+    while(nMotorEncoder[motorA]<DIST_ADJUST_FOR_PEN*CONV_FACTOR)
+    {}
+    go(0);
+    rotateRobot(270, 20);
+}
+
+
+void draw (bool status)
+{
+    if (status == 1)
+    {
+        nMotorEncoder[motorB] = 0;
+        motor[motorB] = -PEN_SPEED;
+        while (nMotorEncoder[motorB] > -PEN_MOTOR_ROTATION)
+        {}
+        motor[motorB] = 0;
+    }
+    else
+    {
+        motor[motorB] = PEN_SPEED;
+        while (nMotorEncoder[motorB] < 0)
+        {}
+        motor[motorB]=0;
+    }
+}
+
+
+
+bool isMoving(float initialDistance)
+{
+    int tolerance = 1.5; /*This tolerance helps to make sure the robot doesn't incorrectly 
+    think the object is moving due to inacurate variations in the ultrasonic sensor readings*/
+    return ((SensorValue[ULTRASONIC_SENSOR_PORT] < initialDistance - tolerance) ||
+    (SensorValue[ULTRASONIC_SENSOR_PORT] > initialDistance + tolerance));
+}
+
+
+void collectValues()
+{
+    bool isValid = true;
+    for (int index = 0; index < NUM_INTERVAL; index++)
+    {
+        if (isValid)
+        {
+            float distance = INTERVAL_DIST_CM;
+                float time = 0, startingPoint = 0;
+                int tolerance = 5; 
+  /*This tolerance accounts for inaccuracies in the U/S sensor readings, and 
+  helps to make sure the robot will only enter the Emergency Shutdown Procedure 
+  if the moving object is actually moving towards it*/
+  
+                valuesArray[index][0] = INTERVAL_DIST_CM;
+                // saves the interval distance temporarily to first column of array
+
+                startingPoint = SensorValue[ULTRASONIC_SENSOR_PORT];
+
+                // wait for object to move before starting
+                while (!isMoving(startingPoint))
+                {}
+
+                displayBigTextLine(3, "Object Moved");
+
+                
+                // Invalid Input & Emergency Shutdown Procedure
+                if(SensorValue[ULTRASONIC_SENSOR_PORT] < startingPoint - tolerance)
+                {
+                    displayBigTextLine(3, "Invalid input");
+                    while (SensorValue[ULTRASONIC_SENSOR_PORT] < startingPoint - tolerance)
+                    {
+                        go(-50);
+                        wait1Msec(1000);
+                    }
+                    go(0);
+                    isValid = false;
+                }
+
+                else // Valid Input & Main Value Collect Block
+                {
+                    clearTimer(T1);
+                    while (SensorValue[ULTRASONIC_SENSOR_PORT] - startingPoint < distance)
+                    {}  
+                    /*While the moving object still hasn't traveled the interval distance, 
+                     do nothing*/
+                    time = time1[T1] / 1000.0;  // convert to seconds
+                    valuesArray[index][1] = time;
+                    displayString(5+index, "Value Added");
+                }
+        }
+    }
+}
+
+
+
+void calcVelocity()
+{
+    for(int index = 0; index < NUM_INTERVAL; index++)
+    {
+        float velocity = INTERVAL_DIST_CM / valuesArray[index][1];
+        valuesArray[index][0] = velocity;
+    }
+}
+
+
+
+
+void moveToCoordinate()
+{
+    for(int index = 0; index < NUM_INTERVAL; index++)
+    {
+        float enc_velo_limit = CONV_FACTOR*valuesArray[index][0]*SCALE;
+        float enc_time_limit = CONV_FACTOR*valuesArray[index][1]*SCALE;
+
+        if (index > 0)
+        {
+            if (valuesArray[index][0] > valuesArray[index-1][0])
+            {
+                rotateRobot(270, 20);
+            }
+            else
+            {
+                rotateRobot(90, 20);
+            }
+
+            float newVeloLimit = CONV_FACTOR*(abs(valuesArray[index][0] - 
+            valuesArray[index-1][0]))*SCALE;
+
+            nMotorEncoder[motorA]=nMotorEncoder[motorD]=0;
+            motor[motorA]=motor[motorD]= DRIVE_SPEED;
+        
+            while (abs(nMotorEncoder[motorD])< newVeloLimit)
+            {}
+            go(0);
+        }
+
+        if (index == 0)
+        {
+            nMotorEncoder[motorA]=nMotorEncoder[motorD]=0;
+            motor[motorA]=motor[motorD]= DRIVE_SPEED;
+            
+            while (abs(nMotorEncoder[motorD])< enc_velo_limit)
+            {}
+            go(0);
+        }
+
+        if (index == 0 || valuesArray[index][0] - valuesArray[index-1][0] > 0)
+        {
+            rotateRobot(90, 20);
+        }
+        else
+        {
+            rotateRobot(270, 20);
+        }
+
+        draw(1); // pen down 
+
+        nMotorEncoder[motorA]=nMotorEncoder[motorD]=0;
+        motor[motorA]=motor[motorD]= DRIVE_SPEED;
+        
+        while (abs(nMotorEncoder[motorD])< enc_time_limit)
+        {}
+    
+        go(0);
+        draw(0);  // lift pen off paper 
+        
+        if (SensorValue[COLOR_SENSOR_PORT] != (int)colorWhite)
+        {
+            index = NON_VALID_INDEX;
+        }
+    }
+}
+
+
+void shutdownRobot()
+{
+    go(25);
+    while(SensorValue[COLOR_SENSOR_PORT] == (int)colorWhite)
+    {}
+    go(0);
+    nMotorEncoder[motorA]=0;
+    go(25);
+    while(nMotorEncoder[motorA]<ROBOT_LENGTH*CONV_FACTOR)
+    {}
+    go(0);
+}
+
+
+task main()
+{
+    bool isValid = true;
+    configure();
+    collectValues();
+
+    for (int index = 0; index < NUM_INTERVAL; index++)
+    {
+        if (valuesArray[index][1] == 0)
+            isValid = false;
+    }
+
+    eraseDisplay();
+
+    if (isValid)
+    {
+        calcVelocity();
+        driveToPaper();
+        moveToCoordinate();
+        shutdownRobot();
+
+        displayString(2, "Speed 1 = %0.2f cm/s", valuesArray[0][0]);
+        displayString(3, "Speed 2 = %0.2f cm/s", valuesArray[1][0]);
+        displayString(4, "Speed 3 = %0.2f cm/s", valuesArray[2][0]);
+        displayString(5, "Speed 4 = %0.2f cm/s", valuesArray[3][0]);
+
+    }
+    else
+    {
+        displayString(2, "Invalid input received");
+    }
+
+    while(!getButtonPress(buttonAny))
+    {}
+    while(getButtonPress(buttonAny))
+    {}
+}
